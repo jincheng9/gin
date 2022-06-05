@@ -1,4 +1,4 @@
-// Copyright 2014 Manu Martinez-Almeida.  All rights reserved.
+// Copyright 2014 Manu Martinez-Almeida. All rights reserved.
 // Use of this source code is governed by a MIT style
 // license that can be found in the LICENSE file.
 
@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"reflect"
 	"strings"
@@ -211,7 +212,7 @@ func TestContextSetGetValues(t *testing.T) {
 	c.Set("uint64", uint64(42))
 	c.Set("float32", float32(4.2))
 	c.Set("float64", 4.2)
-	var a interface{} = 1
+	var a any = 1
 	c.Set("intInterface", a)
 
 	assert.Exactly(t, c.MustGet("string").(string), "this is a string")
@@ -286,7 +287,7 @@ func TestContextGetStringSlice(t *testing.T) {
 
 func TestContextGetStringMap(t *testing.T) {
 	c, _ := CreateTestContext(httptest.NewRecorder())
-	m := make(map[string]interface{})
+	m := make(map[string]any)
 	m["foo"] = 1
 	c.Set("map", m)
 
@@ -1033,6 +1034,19 @@ func TestContextRenderAttachment(t *testing.T) {
 	assert.Equal(t, fmt.Sprintf("attachment; filename=\"%s\"", newFilename), w.Header().Get("Content-Disposition"))
 }
 
+func TestContextRenderUTF8Attachment(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := CreateTestContext(w)
+	newFilename := "new🧡_filename.go"
+
+	c.Request, _ = http.NewRequest("GET", "/", nil)
+	c.FileAttachment("./gin.go", newFilename)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Contains(t, w.Body.String(), "func New() *Engine {")
+	assert.Equal(t, `attachment; filename*=UTF-8''`+url.QueryEscape(newFilename), w.Header().Get("Content-Disposition"))
+}
+
 // TestContextRenderYAML tests that the response is serialized as YAML
 // and Content-Type is set to application/x-yaml
 func TestContextRenderYAML(t *testing.T) {
@@ -1759,6 +1773,23 @@ func TestContextShouldBindWithYAML(t *testing.T) {
 	assert.Equal(t, 0, w.Body.Len())
 }
 
+func TestContextShouldBindWithTOML(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := CreateTestContext(w)
+
+	c.Request, _ = http.NewRequest("POST", "/", bytes.NewBufferString("foo='bar'\nbar= 'foo'"))
+	c.Request.Header.Add("Content-Type", MIMETOML) // set fake content-type
+
+	var obj struct {
+		Foo string `toml:"foo"`
+		Bar string `toml:"bar"`
+	}
+	assert.NoError(t, c.ShouldBindTOML(&obj))
+	assert.Equal(t, "foo", obj.Bar)
+	assert.Equal(t, "bar", obj.Foo)
+	assert.Equal(t, 0, w.Body.Len())
+}
+
 func TestContextBadAutoShouldBind(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := CreateTestContext(w)
@@ -1866,6 +1897,7 @@ func TestContextGolangContext(t *testing.T) {
 	assert.Equal(t, ti, time.Time{})
 	assert.False(t, ok)
 	assert.Equal(t, c.Value(0), c.Request)
+	assert.Equal(t, c.Value(ContextKey), c)
 	assert.Nil(t, c.Value("foo"))
 
 	c.Set("foo", "bar")
@@ -2036,8 +2068,8 @@ func TestRaceParamsContextCopy(t *testing.T) {
 			}(c.Copy(), c.Param("name"))
 		})
 	}
-	performRequest(router, "GET", "/name1/api")
-	performRequest(router, "GET", "/name2/api")
+	PerformRequest(router, "GET", "/name1/api")
+	PerformRequest(router, "GET", "/name2/api")
 	wg.Wait()
 }
 
@@ -2111,12 +2143,12 @@ type contextKey string
 func TestContextWithFallbackValueFromRequestContext(t *testing.T) {
 	tests := []struct {
 		name             string
-		getContextAndKey func() (*Context, interface{})
-		value            interface{}
+		getContextAndKey func() (*Context, any)
+		value            any
 	}{
 		{
 			name: "c with struct context key",
-			getContextAndKey: func() (*Context, interface{}) {
+			getContextAndKey: func() (*Context, any) {
 				var key struct{}
 				c := &Context{}
 				c.Request, _ = http.NewRequest("POST", "/", nil)
@@ -2127,7 +2159,7 @@ func TestContextWithFallbackValueFromRequestContext(t *testing.T) {
 		},
 		{
 			name: "c with string context key",
-			getContextAndKey: func() (*Context, interface{}) {
+			getContextAndKey: func() (*Context, any) {
 				c := &Context{}
 				c.Request, _ = http.NewRequest("POST", "/", nil)
 				c.Request = c.Request.WithContext(context.WithValue(context.TODO(), contextKey("key"), "value"))
@@ -2137,7 +2169,7 @@ func TestContextWithFallbackValueFromRequestContext(t *testing.T) {
 		},
 		{
 			name: "c with nil http.Request",
-			getContextAndKey: func() (*Context, interface{}) {
+			getContextAndKey: func() (*Context, any) {
 				c := &Context{}
 				return c, "key"
 			},
@@ -2145,7 +2177,7 @@ func TestContextWithFallbackValueFromRequestContext(t *testing.T) {
 		},
 		{
 			name: "c with nil http.Request.Context()",
-			getContextAndKey: func() (*Context, interface{}) {
+			getContextAndKey: func() (*Context, any) {
 				c := &Context{}
 				c.Request, _ = http.NewRequest("POST", "/", nil)
 				return c, "key"
